@@ -319,7 +319,6 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
             </svg>
             {panoramaPoints.filter((point) => point.floor === floor).map((point) => {
               const hasPanorama = Boolean(PANORAMA_FILES[point.id])
-              const pointNumber = point.id.match(/capture-(\d+)$/)?.[1] ?? '?'
               return (
               <button
                 key={point.id}
@@ -339,7 +338,6 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
                 }}
               >
                 <span className="indoor-pano-marker-core" />
-                <span className="indoor-pano-marker-number" aria-hidden="true">{pointNumber}</span>
               </button>
               )
             })}

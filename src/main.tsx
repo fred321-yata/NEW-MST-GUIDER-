@@ -34,6 +34,7 @@ const DEMO_WAYPOINTS_GPS: LatLng[] = [
 function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadingProgress, setLoadingProgress] = useState(1)
+  const [isSecondaryMenuOpen, setIsSecondaryMenuOpen] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const savedTheme = window.localStorage.getItem('school-guider-theme')
     if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme
@@ -170,20 +171,35 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
+      <header className={`topbar${isSecondaryMenuOpen ? ' secondary-menu-open' : ''}`}>
         <div className="brand-mark" aria-label="SEAIT logo"><span>SEAIT</span><img src="/publicseait-logo.png.jpg" alt="" onError={(event) => { event.currentTarget.style.display = 'none' }} /></div>
-        <div>
+        <div className="topbar-copy">
           <p className="eyebrow">SEAIT CAMPUS GUIDE</p>
           <h1>SEAIT (SOUTH EAST ASIA INSTITUTE OF TECHNOLOGY)</h1>
         </div>
+        <button
+          className="menu-toggle"
+          type="button"
+          aria-label={isSecondaryMenuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={isSecondaryMenuOpen}
+          aria-controls="secondary-navigation"
+          onClick={() => setIsSecondaryMenuOpen((isOpen) => !isOpen)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        <nav id="secondary-navigation" className="topbar-nav" aria-label="Secondary navigation" aria-hidden={!isSecondaryMenuOpen}>
+          <a href="#about-us" tabIndex={isSecondaryMenuOpen ? 0 : -1} onClick={() => setIsSecondaryMenuOpen(false)}>About us</a>
+          <a href="#contact" tabIndex={isSecondaryMenuOpen ? 0 : -1} onClick={() => setIsSecondaryMenuOpen(false)}>Contact</a>
+        </nav>
       </header>
 
-      <section className="content" aria-live="polite">
+      <section id="map" className="content" aria-live="polite">
         {screen === 'search' && (
           <SearchScreen
             onBack={() => setScreen('map')}
             onSelectPlace={openSearchHit}
-            onNavigate={(target) => startNavigation(target)}
             onOpenIndoor={(roomId) => openIndoorNavigator(roomId)}
           />
         )}
@@ -201,7 +217,7 @@ function App() {
           <>
             <div className="dashboard-layout">
               <section className="aerial-view-card panel-enter" aria-label="SEAIT aerial view">
-                <div className="front-view-heading"><div><p className="eyebrow">CAMPUS VIEW</p><h2>Aerial view</h2></div></div>
+                <div className="front-view-heading"><div><p className="eyebrow">CAMPUS VIEW</p><h2>Top view</h2></div></div>
                 <div className="map-card">
                   <CampusMapCanvas
                     userPercent={userPercent}
@@ -230,6 +246,18 @@ function App() {
               onNavigate={() => setScreen('navigate')}
               onOpenIndoor={() => openIndoorNavigator(null)}
             />
+
+            <section id="about-us" className="info-card panel-enter">
+              <p className="eyebrow">ABOUT US</p>
+              <h2>Built for easier campus discovery.</h2>
+              <p>SEAIT Guider helps students and visitors quickly locate key buildings, pathways, and indoor rooms across the campus.</p>
+            </section>
+
+            <section id="contact" className="info-card panel-enter">
+              <p className="eyebrow">CONTACT</p>
+              <h2>Need help or have a question?</h2>
+              <p>Email: support@seait.edu.ph<br />Phone: +63 (088) 555-0102</p>
+            </section>
           </>
         )}
       </section>
@@ -300,9 +328,7 @@ function CampusMapCanvas({
     return () => observer.disconnect()
   }, [])
 
-  // The photo uses object-fit: contain, so compute the exact displayed image
-  // rect. All percent coordinates are relative to THAT rect — this is what
-  // keeps the blue dot on the precise spot the user stands on.
+  // Include the photo's cropped edges so percent coordinates stay aligned to it.
   const displayed = displayedImageRect(frame.width, frame.height, CAMPUS_IMAGE_ASPECT)
 
   return (
@@ -338,27 +364,25 @@ function CampusMapCanvas({
   )
 }
 
-/** Letterboxed image rect inside a container with object-fit: contain. */
+/** Displayed image rect, including the portions cropped by object-fit: cover. */
 function displayedImageRect(width: number, height: number, aspect: number) {
   if (width <= 0 || height <= 0) return { left: 0, top: 0, width: 0, height: 0 }
   const containerAspect = width / height
   if (containerAspect > aspect) {
-    const imageWidth = height * aspect
-    return { left: (width - imageWidth) / 2, top: 0, width: imageWidth, height }
+    const imageHeight = width / aspect
+    return { left: 0, top: (height - imageHeight) / 2, width, height: imageHeight }
   }
-  const imageHeight = width / aspect
-  return { left: 0, top: (height - imageHeight) / 2, width, height: imageHeight }
+  const imageWidth = height * aspect
+  return { left: (width - imageWidth) / 2, top: 0, width: imageWidth, height }
 }
 
 function SearchScreen({
   onBack,
   onSelectPlace,
-  onNavigate,
   onOpenIndoor,
 }: {
   onBack: () => void
   onSelectPlace: (hit: SearchHit) => void
-  onNavigate: (target: { label: string; nodeId: string }) => void
   onOpenIndoor: (roomId: string) => void
 }) {
   const [query, setQuery] = useState('')
@@ -389,7 +413,6 @@ function SearchScreen({
                 <span><strong>{label}</strong><small>{sub}</small></span>
                 <span className="row-arrow">→</span>
               </button>
-              <button className="mini-navigate" onClick={() => (hit.kind === 'indoor' ? onOpenIndoor(hit.room.id) : onNavigate(targetForHit(hit)))} aria-label={`Navigate to ${label}`}>↗</button>
             </div>
           )
         })}
@@ -800,7 +823,7 @@ function CampusViewer({ onClose, initialPoint = null }: { onClose: () => void; i
                     aria-label={`Open 360 view for point ${displayNumber}`}
                     title={`Open 360 view for point ${displayNumber}`}
                   >
-                    {displayNumber}
+                    {''}
                   </button>
                 )
               })}

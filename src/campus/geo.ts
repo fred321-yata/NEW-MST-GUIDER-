@@ -25,10 +25,10 @@ export const CAMPUS_GEO = {
   /** Degrees the photo is rotated clockwise from true north. */
   rotationDegrees: 1.5,
   boundary: [
-    { latitude: 6.3458, longitude: 124.9352 },
-    { latitude: 6.3458, longitude: 124.9372 },
-    { latitude: 6.3472, longitude: 124.9372 },
-    { latitude: 6.3472, longitude: 124.9352 },
+    { latitude: 6.34717778, longitude: 124.93596389 },
+    { latitude: 6.34635, longitude: 124.93680278 },
+    { latitude: 6.34592222, longitude: 124.93636944 },
+    { latitude: 6.34678611, longitude: 124.93561944 },
   ] as LatLng[],
 }
 

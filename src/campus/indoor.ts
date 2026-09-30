@@ -59,6 +59,7 @@ const FLOOR1_ROOMS: IndoorRoom[] = [
   { id: 'tailor', name: 'TAILOR / GRADE-VII RUBY', floor: 1, kind: 'classroom', rect: rect(74.7, 76, 6.6, 12.3), nodeId: 'f1-right-bottom' },
   { id: 'property-office', name: 'Property management office', floor: 1, kind: 'office', rect: rect(83, 76, 6.6, 12.3), nodeId: 'f1-right-bottom' },
   { id: 'cr-girls-f1', name: 'comfort room', floor: 1, kind: 'comfort-room', rect: rect(4.5, 79, 6.6, 12.3), nodeId: 'f1-left-bottom' },
+  { id: 'cr-girls-f1', name: 'comfort room', floor: 1, kind: 'comfort-room', rect: rect(92, 79, 6.6, 12.3), nodeId: 'f1-left-bottom' },
 
 ]
 
@@ -126,7 +127,7 @@ const FLOOR4_ROOMS: IndoorRoom[] = [
   { id: 'mst-408', name: 'MST 408', floor: 4, kind: 'classroom', rect: rect(66.1, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
   { id: 'mst-407', name: 'MST 407', floor: 4, kind: 'classroom', rect: rect(72.7, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
   { id: 'mst-406', name: 'MST 406', floor: 4, kind: 'classroom', rect: rect(79.3, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
-  { id: 'mst-405', name: 'MST 405', floor: 4, kind: 'classroom', rect: rect(85.9, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-405', name: 'MST 405', floor: 4, kind: 'classroom', rect: rect(89.9, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
   { id: 'mst-401', name: 'MST 401', floor: 4, kind: 'classroom', rect: rect(91.0, 28.5, 6.6, 10.2), nodeId: 'f4-right-top' },
   { id: 'mst-402', name: 'MST 402', floor: 4, kind: 'classroom', rect: rect(91.0, 38.0, 6.6, 12.3), nodeId: 'f4-right-top' },
   { id: 'mst-403', name: 'MST 403', floor: 4, kind: 'classroom', rect: rect(91.0, 50.3, 6.6, 12.3), nodeId: 'f4-right-top' },
