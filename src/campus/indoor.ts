@@ -14,7 +14,7 @@ export type IndoorRoom = {
   nodeId: string
 }
 
-export type MarkerKind = 'entrance' | 'exit' | 'stairs' | 'hallway'
+export type MarkerKind = 'entrance' | 'exit' | 'stairs' | 'view map image'
 
 export type IndoorMarker = {
   id: string
@@ -26,7 +26,7 @@ export type IndoorMarker = {
 }
 
 export const MARKER_COLORS = {
-  entrance: '#2b6ce6',
+  entrance: '#123b72',
   exit: '#e02b2b',
   hallway: '#1f9d3a',
   stairs: '#7a5df0',
@@ -59,14 +59,14 @@ const FLOOR1_ROOMS: IndoorRoom[] = [
   { id: 'tailor', name: 'TAILOR / GRADE-VII RUBY', floor: 1, kind: 'classroom', rect: rect(74.7, 76, 6.6, 12.3), nodeId: 'f1-right-bottom' },
   { id: 'property-office', name: 'Property management office', floor: 1, kind: 'office', rect: rect(83, 76, 6.6, 12.3), nodeId: 'f1-right-bottom' },
   { id: 'cr-girls-f1', name: 'comfort room', floor: 1, kind: 'comfort-room', rect: rect(4.5, 79, 6.6, 12.3), nodeId: 'f1-left-bottom' },
-  { id: 'cr-girls-f1', name: 'comfort room', floor: 1, kind: 'comfort-room', rect: rect(92, 79, 6.6, 12.3), nodeId: 'f1-left-bottom' },
+  { id: 'cr-boys-f1', name: 'comfort room', floor: 1, kind: 'comfort-room', rect: rect(92, 73, 6.6, 12.3), nodeId: 'f1-right-bottom' },
 
 ]
 
 /* ── Floor 2 rooms (MST building 2nd floor) ───────────────────────────────── */
 
 const FLOOR2_ROOMS: IndoorRoom[] = [
-  { id: 'cl10-f2', name: 'CL10', floor: 2, kind: 'classroom', rect: rect(4.5, 31.5, 6.6, 10.2), nodeId: 'f2-left-top' },
+  { id: 'mst-201', name: 'MST 201', floor: 2, kind: 'classroom', rect: rect(4.5, 31.5, 6.6, 10.2), nodeId: 'f2-left-top' },
   { id: 'mst-202', name: 'MST 202', floor: 2, kind: 'classroom', rect: rect(4.5, 41.7, 6.6, 12.3), nodeId: 'f2-left-top' },
   { id: 'mst-203', name: 'MST 203', floor: 2, kind: 'classroom', rect: rect(4.5, 54.0, 6.6, 12.3), nodeId: 'f2-left-bottom' },
   { id: 'mst-204', name: 'MST 204', floor: 2, kind: 'classroom', rect: rect(4.5, 66.3, 6.6, 12.3), nodeId: 'f2-left-bottom' },
@@ -83,7 +83,8 @@ const FLOOR2_ROOMS: IndoorRoom[] = [
   { id: 'mst-214', name: 'MST 214', floor: 2, kind: 'classroom', rect: rect(72.9, 78.0, 6.6, 12.3), nodeId: 'f2-right-bottom' },
   { id: 'mst-215', name: 'MST 215', floor: 2, kind: 'classroom', rect: rect(79.5, 78.0, 6.6, 12.3), nodeId: 'f2-right-bottom' },
   { id: 'college-library-extension', name: 'COLLEGE LIBRARY EXTENSION', floor: 2, kind: 'office', rect: rect(86.1, 78.0, 5.5, 12.3), nodeId: 'f2-right-bottom' },
-  { id: 'bed-department', name: 'BASIC EDUCATION DEPARTMENT (SECONDARY)', floor: 2, kind: 'office', rect: rect(91.0, 62.0, 6.6, 30.0), nodeId: 'f2-right-bottom' },
+  { id: 'bed-department', name: 'BASIC EDUCATION DEPARTMENT (SECONDARY)', floor: 2, kind: 'office', rect: rect(91.0, 62.0, 6.6, 16.0), nodeId: 'f2-right-bottom' },
+  { id: 'cr-f2', name: 'comfort room', floor: 2, kind: 'comfort-room', rect: rect(91.6, 78.0, 6.6, 12.3), nodeId: 'f2-right-bottom' },
   { id: 'mst-221', name: 'MST 221', floor: 2, kind: 'classroom', rect: rect(91.0, 27.5, 6.6, 10.2), nodeId: 'f2-right-top' },
   { id: 'mst-220', name: 'MST 220', floor: 2, kind: 'classroom', rect: rect(91.0, 38.0, 6.6, 12.3), nodeId: 'f2-right-top' },
   { id: 'gs-emerald', name: 'GS-EMERALD', floor: 2, kind: 'classroom', rect: rect(91.0, 49.0, 6.6, 12.3), nodeId: 'f2-right-top' },
@@ -105,8 +106,8 @@ const FLOOR3_ROOMS: IndoorRoom[] = [
   { id: 'cl1', name: 'CL1', floor: 3, kind: 'classroom', rect: rect(66.1, 76.0, 9.0, 12.3), nodeId: 'f3-right-bottom' },
   { id: 'cl2', name: 'CL2', floor: 3, kind: 'classroom', rect: rect(75.0, 76.0, 8.0, 12.3), nodeId: 'f3-right-bottom' },
   { id: 'cl3', name: 'CL3', floor: 3, kind: 'classroom', rect: rect(83.3, 76.0, 8.0, 12.3), nodeId: 'f3-right-bottom' },
-  { id: 'cr-boys-f3', name: 'comfort room', floor: 3, kind: 'comfort-room', rect: rect(91.9, 76, 6.6, 12.3), nodeId: 'f3-right-bottom' },
   { id: 'cr-girls-f3', name: 'comfort room', floor: 3, kind: 'comfort-room', rect: rect(4.5, 76, 6.6, 12.3), nodeId: 'f3-left-bottom' },
+  { id: 'cr-boys-f3', name: 'comfort room', floor: 3, kind: 'comfort-room', rect: rect(91.9, 76, 6.6, 12.3), nodeId: 'f3-right-bottom' },
   { id: 'mst-301', name: 'MST 301', floor: 3, kind: 'classroom', rect: rect(91.0, 28.5, 6.6, 10.2), nodeId: 'f3-right-top' },
   { id: 'mst-302', name: 'MST 302', floor: 3, kind: 'classroom', rect: rect(91.0, 38.7, 6.6, 12.3), nodeId: 'f3-right-top' },
   { id: 'mst-303', name: 'MST 303', floor: 3, kind: 'classroom', rect: rect(91.0, 50.0, 6.6, 12.3), nodeId: 'f3-right-top' },
@@ -118,21 +119,21 @@ const FLOOR3_ROOMS: IndoorRoom[] = [
 const FLOOR4_ROOMS: IndoorRoom[] = [
   { id: 'library-f4', name: 'LIBRARY', floor: 4, kind: 'library', rect: rect(4.5, 31.5, 6.6, 43.5), nodeId: 'f4-left-top' },
   { id: 'library-f4-bottom', name: 'LIBRARY', floor: 4, kind: 'library', rect: rect(4.5, 76.0, 15.5, 12.3), nodeId: 'f4-left-bottom' },
-  { id: 'mst-409-f4', name: 'MST 409', floor: 4, kind: 'classroom', rect: rect(59.5, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
-  { id: 'mst-414-f4', name: 'MST 414', floor: 4, kind: 'classroom', rect: rect(20.0, 76.0, 6.6, 12.3), nodeId: 'f4-mid-bottom' },
-  { id: 'mst-413', name: 'MST 413', floor: 4, kind: 'classroom', rect: rect(27.0, 76.0, 6.6, 12.3), nodeId: 'f4-mid-bottom' },
-  { id: 'mst-412', name: 'MST 412', floor: 4, kind: 'classroom', rect: rect(33.5, 76.0, 6.6, 12.3), nodeId: 'f4-center-bottom' },
-  { id: 'mst-411', name: 'MST 411', floor: 4, kind: 'classroom', rect: rect(40.0, 76.0, 6.6, 12.3), nodeId: 'f4-center-bottom' },
-  { id: 'mst-410', name: 'MST 410', floor: 4, kind: 'classroom', rect: rect(53.0, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
-  { id: 'mst-408', name: 'MST 408', floor: 4, kind: 'classroom', rect: rect(66.1, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
-  { id: 'mst-407', name: 'MST 407', floor: 4, kind: 'classroom', rect: rect(72.7, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
-  { id: 'mst-406', name: 'MST 406', floor: 4, kind: 'classroom', rect: rect(79.3, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
-  { id: 'mst-405', name: 'MST 405', floor: 4, kind: 'classroom', rect: rect(89.9, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-410', name: 'MST 410', floor: 4, kind: 'classroom', rect: rect(59.5, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-415', name: 'MST 415', floor: 4, kind: 'classroom', rect: rect(20.0, 76.0, 6.6, 12.3), nodeId: 'f4-mid-bottom' },
+  { id: 'mst-414', name: 'MST 414', floor: 4, kind: 'classroom', rect: rect(27.0, 76.0, 6.6, 12.3), nodeId: 'f4-mid-bottom' },
+  { id: 'mst-413', name: 'MST 413', floor: 4, kind: 'classroom', rect: rect(33.5, 76.0, 6.6, 12.3), nodeId: 'f4-center-bottom' },
+  { id: 'mst-412', name: 'MST 412', floor: 4, kind: 'classroom', rect: rect(40.0, 76.0, 6.6, 12.3), nodeId: 'f4-center-bottom' },
+  { id: 'mst-411', name: 'MST 411', floor: 4, kind: 'classroom', rect: rect(53.0, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-409', name: 'MST 409', floor: 4, kind: 'classroom', rect: rect(66.1, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-408', name: 'MST 408', floor: 4, kind: 'classroom', rect: rect(72.7, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-407', name: 'MST 407', floor: 4, kind: 'classroom', rect: rect(79.3, 76.0, 6.6, 12.3), nodeId: 'f4-right-bottom' },  
   { id: 'mst-401', name: 'MST 401', floor: 4, kind: 'classroom', rect: rect(91.0, 28.5, 6.6, 10.2), nodeId: 'f4-right-top' },
   { id: 'mst-402', name: 'MST 402', floor: 4, kind: 'classroom', rect: rect(91.0, 38.0, 6.6, 12.3), nodeId: 'f4-right-top' },
   { id: 'mst-403', name: 'MST 403', floor: 4, kind: 'classroom', rect: rect(91.0, 50.3, 6.6, 12.3), nodeId: 'f4-right-top' },
   { id: 'mst-404', name: 'MST 404', floor: 4, kind: 'classroom', rect: rect(91.0, 62.6, 6.6, 12.3), nodeId: 'f4-right-top' },
-  { id: 'mst-405', name: 'MST 405', floor: 4, kind: 'classroom', rect: rect(92.0, 75.0, 6.0, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-406', name: 'MST 406', floor: 4, kind: 'classroom', rect: rect(86.0, 74.9, 5.4, 12.3), nodeId: 'f4-right-bottom' },
+  { id: 'mst-405', name: 'MST 405', floor: 4, kind: 'classroom', rect: rect(91.0, 74.9, 6.6, 12.3), nodeId: 'f4-right-bottom' },
 ]
 
 export const INDOOR_ROOMS: IndoorRoom[] = [

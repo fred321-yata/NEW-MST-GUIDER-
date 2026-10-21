@@ -3,33 +3,14 @@ import { createRoot } from 'react-dom/client'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import './styles.css'
-import { CAMPUS_IMAGE_ASPECT, formatDistance, gpsFromImagePercent, imagePercentFromGps, isInsideCampus } from './campus/geo'
-import type { LatLng, Point2D } from './campus/geo'
-import { CAMPUS_NODES, CAMPUS_PLACES, STREET_VIEW_POINTS, searchCampus, targetForHit } from './campus/model'
+import { CAMPUS_IMAGE_ASPECT } from './campus/geo'
+import type { Point2D } from './campus/geo'
+import { CAMPUS_NODES, CAMPUS_PLACES, STREET_VIEW_POINTS, searchCampus } from './campus/model'
 import type { SearchHit } from './campus/model'
-import { buildTurnSteps, currentStep, findRoute, formatRouteDistance, nearestNodeId, routeFromLocation, walkProgress } from './campus/routing'
-import type { CampusRoute } from './campus/routing'
-import { IndoorNavigator } from './IndoorNavigator'
+import { findIndoorRoute, INDOOR_BUILDING, INDOOR_ROOMS } from './campus/indoor'
+import { IndoorNavigator, nearestIndoorPanoramaId } from './IndoorNavigator'
 
-type UserLocation = {
-  latitude: number
-  longitude: number
-  accuracy: number
-  heading: number | null
-}
-
-type Screen = 'map' | 'search' | 'navigate'
-
-const ARRIVAL_RADIUS = 8
-const OFF_ROUTE_LIMIT = 25
-
-/** Demo walk (gate → MST entrance) used when GPS is unavailable, e.g. laptop preview. */
-const DEMO_WAYPOINTS_GPS: LatLng[] = [
-  { x: 50, y: 93 },
-  { x: 50, y: 78 },
-  { x: 50, y: 60 },
-  { x: 50, y: 49.5 },
-].map(gpsFromImagePercent)
+type Screen = 'map' | 'search' | 'direction'
 
 function App() {
   const [isLoading, setIsLoading] = useState(true)
@@ -41,20 +22,34 @@ function App() {
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
   })
   const [screen, setScreen] = useState<Screen>('map')
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedHit, setSelectedHit] = useState<SearchHit | null>(null)
   const [isViewerOpen, setIsViewerOpen] = useState(false)
   const [viewerPoint, setViewerPoint] = useState<number | null>(null)
-  const [navigationTarget, setNavigationTarget] = useState<{ label: string; nodeId: string } | null>(null)
+  const [viewerReturnScreen, setViewerReturnScreen] = useState<'map' | 'direction'>('map')
   const [indoorRoomId, setIndoorRoomId] = useState<string | null>(null)
+  const [indoorPanoramaId, setIndoorPanoramaId] = useState<string | null>(null)
   const [isIndoorOpen, setIsIndoorOpen] = useState(false)
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'locating' | 'tracking' | 'error'>('idle')
-  const [gpsLocation, setGpsLocation] = useState<UserLocation | null>(null)
-  const [isDemoWalking, setIsDemoWalking] = useState(false)
-  const locationWatchRef = useRef<number | null>(null)
+  const [infoModal, setInfoModal] = useState<'about' | 'contact' | null>(null)
 
-  const demoLocation = useSimulatedWalk(isDemoWalking, DEMO_WAYPOINTS_GPS)
-  const liveLocation: UserLocation | null = demoLocation ?? gpsLocation
-  const effectiveStatus: 'idle' | 'locating' | 'tracking' | 'error' = demoLocation ? 'tracking' : locationStatus
+  const openInfoModal = (modal: 'about' | 'contact') => {
+    setInfoModal(modal)
+    setIsSecondaryMenuOpen(false)
+  }
+
+  useEffect(() => {
+    if (!infoModal) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setInfoModal(null)
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [infoModal])
 
   useEffect(() => {
     const start = Date.now()
@@ -77,62 +72,6 @@ function App() {
     window.localStorage.setItem('school-guider-theme', theme)
   }, [theme])
 
-  useEffect(
-    () => () => {
-      if (locationWatchRef.current !== null) navigator.geolocation?.clearWatch(locationWatchRef.current)
-    },
-    [],
-  )
-
-  const startLocationTracking = () => {
-    if (!navigator.geolocation) {
-      setLocationStatus('error')
-      return
-    }
-    setLocationStatus('locating')
-    if (locationWatchRef.current !== null) navigator.geolocation.clearWatch(locationWatchRef.current)
-    locationWatchRef.current = navigator.geolocation.watchPosition(
-      (position) => {
-        setGpsLocation({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          heading: position.coords.heading,
-        })
-        setLocationStatus('tracking')
-      },
-      () => setLocationStatus('error'),
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
-    )
-  }
-
-  const toggleLocationTracking = () => {
-    if (locationWatchRef.current !== null) {
-      navigator.geolocation?.clearWatch(locationWatchRef.current)
-      locationWatchRef.current = null
-      setGpsLocation(null)
-      setLocationStatus('idle')
-      return
-    }
-    startLocationTracking()
-  }
-
-  const stopNavigation = () => {
-    setNavigationTarget(null)
-    setIsDemoWalking(false)
-    if (locationWatchRef.current !== null) {
-      navigator.geolocation?.clearWatch(locationWatchRef.current)
-      locationWatchRef.current = null
-    }
-    setLocationStatus('idle')
-  }
-
-  const startNavigation = (target: { label: string; nodeId: string }) => {
-    setNavigationTarget(target)
-    setIsViewerOpen(false)
-    if (!isDemoWalking) startLocationTracking()
-  }
-
   const openPlace = (hit: SearchHit) => {
     setSelectedHit(hit)
     setScreen('map')
@@ -154,18 +93,18 @@ function App() {
     openPlace(hit)
   }
 
-  const open360Viewer = (point: number | null) => {
+  const open360Viewer = (point: number | null, returnScreen: 'map' | 'direction' = 'map') => {
     setViewerPoint(point)
+    setViewerReturnScreen(returnScreen)
+    setScreen(returnScreen)
     setIsViewerOpen(true)
   }
 
-  const openIndoorNavigator = (roomId: string | null) => {
+  const openIndoorNavigator = (roomId: string | null, panoramaId: string | null = null) => {
     setIndoorRoomId(roomId)
+    setIndoorPanoramaId(panoramaId)
     setIsIndoorOpen(true)
   }
-
-  const liveGps: LatLng | null = liveLocation ? { latitude: liveLocation.latitude, longitude: liveLocation.longitude } : null
-  const userPercent = liveGps ? imagePercentFromGps(liveGps) : null
 
   if (isLoading) return <LoadingScreen progress={loadingProgress} />
 
@@ -190,10 +129,32 @@ function App() {
           <span />
         </button>
         <nav id="secondary-navigation" className="topbar-nav" aria-label="Secondary navigation" aria-hidden={!isSecondaryMenuOpen}>
-          <a href="#about-us" tabIndex={isSecondaryMenuOpen ? 0 : -1} onClick={() => setIsSecondaryMenuOpen(false)}>About us</a>
-          <a href="#contact" tabIndex={isSecondaryMenuOpen ? 0 : -1} onClick={() => setIsSecondaryMenuOpen(false)}>Contact</a>
+          <a href="#about-us" tabIndex={isSecondaryMenuOpen ? 0 : -1} onClick={(event) => { event.preventDefault(); openInfoModal('about') }}>About us</a>
+          <a href="#contact" tabIndex={isSecondaryMenuOpen ? 0 : -1} onClick={(event) => { event.preventDefault(); openInfoModal('contact') }}>Contact</a>
         </nav>
       </header>
+
+      {!isIndoorOpen && !isViewerOpen && (
+        <div className="explore-search">
+          <label className="explore-search-field">
+            <span aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              aria-label="Explore campus"
+              placeholder="Explore buildings, areas, or rooms"
+              value={searchQuery}
+              onFocus={() => setScreen('search')}
+              onChange={(event) => {
+                setSearchQuery(event.target.value)
+                setScreen('search')
+              }}
+            />
+            {searchQuery && (
+              <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search">×</button>
+            )}
+          </label>
+        </div>
+      )}
 
       <section id="map" className="content" aria-live="polite">
         {screen === 'search' && (
@@ -201,16 +162,12 @@ function App() {
             onBack={() => setScreen('map')}
             onSelectPlace={openSearchHit}
             onOpenIndoor={(roomId) => openIndoorNavigator(roomId)}
+            query={searchQuery}
           />
         )}
 
-        {screen === 'navigate' && (
-          <NavigateScreen
-            hit={selectedHit}
-            liveGps={liveGps}
-            onBack={() => setScreen('map')}
-            onStart={(target) => startNavigation(target)}
-          />
+        {screen === 'direction' && (
+          <DirectionScreen onOpenRoom={openIndoorNavigator} onOpenCampusPoint={open360Viewer} />
         )}
 
         {screen === 'map' && (
@@ -220,9 +177,6 @@ function App() {
                 <div className="front-view-heading"><div><p className="eyebrow">CAMPUS VIEW</p><h2>Top view</h2></div></div>
                 <div className="map-card">
                   <CampusMapCanvas
-                    userPercent={userPercent}
-                    route={null}
-                    destinationPercent={null}
                     onPlaceMarker={(placeId) => {
                       const place = CAMPUS_PLACES.find((candidate) => candidate.id === placeId)
                       if (place) openPlace({ kind: 'place', place })
@@ -234,7 +188,7 @@ function App() {
 
             <section className="front-view-card panel-enter" aria-label="SEAIT front view">
               <div className="front-view-heading"><div><p className="eyebrow">CAMPUS VIEW</p><h2>Front view</h2></div></div>
-              <img className="dashboard-front-image" src="/d5bdb47f-2c38-4f94-9830-01634591a7fc.png" alt="Front view of the SEAIT building" />
+              <img className="dashboard-front-image" src="/d5bdb47f-2c38-4f94-9830-01634591a7fc.png" alt="Front view of the SEAIT building" draggable={false} onDragStart={(event) => event.preventDefault()} />
             </section>
 
             <section className="section-heading">
@@ -243,44 +197,70 @@ function App() {
             </section>
             <PlaceDetailCard
               hit={selectedHit ?? { kind: 'place', place: CAMPUS_PLACES[0] }}
-              onNavigate={() => setScreen('navigate')}
+              onDirections={() => {
+                setScreen('direction')
+              }}
               onOpenIndoor={() => openIndoorNavigator(null)}
             />
 
-            <section id="about-us" className="info-card panel-enter">
-              <p className="eyebrow">ABOUT US</p>
-              <h2>Built for easier campus discovery.</h2>
-              <p>SEAIT Guider helps students and visitors quickly locate key buildings, pathways, and indoor rooms across the campus.</p>
-            </section>
-
-            <section id="contact" className="info-card panel-enter">
-              <p className="eyebrow">CONTACT</p>
-              <h2>Need help or have a question?</h2>
-              <p>Email: support@seait.edu.ph<br />Phone: +63 (088) 555-0102</p>
-            </section>
           </>
         )}
       </section>
 
+      {infoModal && (
+        <div className="info-modal-backdrop" onClick={() => setInfoModal(null)}>
+          <section
+            className="info-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="info-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="info-modal-banner">
+              <button className="info-modal-close" type="button" aria-label="Close dialog" onClick={() => setInfoModal(null)}>×</button>
+              <span className="info-modal-emblem" aria-hidden="true">{infoModal === 'about' ? '✦' : '✉'}</span>
+              <p className="info-modal-eyebrow">{infoModal === 'about' ? 'ABOUT SEAIT GUIDER' : 'WE’RE HERE TO HELP'}</p>
+              <h2 id="info-modal-title">
+                {infoModal === 'about' ? 'Built for easier campus discovery.' : 'Need help or have a question?'}
+              </h2>
+            </div>
+            <div className="info-modal-content">
+              {infoModal === 'about' ? (
+                <p>SEAIT Guider helps students and visitors quickly locate key buildings, pathways, and hallway rooms across the campus.</p>
+              ) : (
+                <>
+                  <p>Get in touch with us if you need help finding your way around campus.</p>
+                  <a href="mailto:freddieyata88@gmail.com"><span aria-hidden="true">✉</span> freddieyata88@gmail.com</a>
+                  <a href="tel:+639306672483"><span aria-hidden="true">☎</span> +63 930 667 2483</a>
+                </>
+              )}
+            </div>
+            <div className="info-modal-footer">
+              <span>SEAIT CAMPUS GUIDE</span>
+              <button type="button" onClick={() => setInfoModal(null)}>Got it</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       <nav className="bottom-nav" aria-label="Primary navigation">
-        <button className={screen === 'map' && !isIndoorOpen && !isViewerOpen ? 'nav-item active' : 'nav-item'} onClick={() => { setIsIndoorOpen(false); setIsViewerOpen(false); setNavigationTarget(null); setScreen('map') }}><span>⌖</span><small>Map</small></button>
-        <button className={isIndoorOpen ? 'nav-item active' : 'nav-item'} type="button" onClick={() => { setIsViewerOpen(false); setNavigationTarget(null); setScreen('map'); openIndoorNavigator(null) }} aria-label="Open MST building map"><span>⌂</span><small>MST BUILDING</small></button>
-        <button className={screen === 'search' ? 'nav-item active' : 'nav-item'} onClick={() => { setIsIndoorOpen(false); setIsViewerOpen(false); setNavigationTarget(null); setScreen('search') }}><span>⌕</span><small>Explore</small></button>
-        <button className={isViewerOpen ? 'nav-item active' : 'nav-item'} type="button" onClick={() => { setIsIndoorOpen(false); setNavigationTarget(null); setScreen('map'); open360Viewer(null) }} aria-label="Open campus 360 views"><span>◎</span><small>MST FIELD</small></button>
-        <button className={screen === 'navigate' ? 'nav-item active' : 'nav-item'} onClick={() => { setIsIndoorOpen(false); setIsViewerOpen(false); setScreen('navigate') }}><span>↗</span><small>Navigate</small></button>
+        <button className={screen === 'map' && !isIndoorOpen && !isViewerOpen ? 'nav-item active' : 'nav-item'} onClick={() => { setIsIndoorOpen(false); setIsViewerOpen(false); setScreen('map') }}><span>⌖</span><small>Map</small></button>
+        <button className={isIndoorOpen ? 'nav-item active' : 'nav-item'} type="button" onClick={() => { setIsViewerOpen(false); setScreen('map'); openIndoorNavigator(null) }} aria-label="Open MST building map"><span>⌂</span><small>MST BUILDING</small></button>
+        <button className={isViewerOpen ? 'nav-item active' : 'nav-item'} type="button" onClick={() => { setIsIndoorOpen(false); setScreen('map'); open360Viewer(null) }} aria-label="Open campus 360 views"><span>◎</span><small>MST FIELD</small></button>
+        <button className={screen === 'direction' ? 'nav-item active' : 'nav-item'} onClick={() => { setIsIndoorOpen(false); setIsViewerOpen(false); setScreen('direction') }}><span>↗</span><small>Direction</small></button>
       </nav>
 
-      {isViewerOpen && <CampusViewer initialPoint={viewerPoint} onClose={() => setIsViewerOpen(false)} />}
-      {isIndoorOpen && <IndoorNavigator initialRoomId={indoorRoomId} onClose={() => setIsIndoorOpen(false)} />}
-      {navigationTarget && (
-        <NavigationOverlay
-          target={navigationTarget}
-          location={liveLocation}
-          status={effectiveStatus}
-          onClose={stopNavigation}
-          onDemo={() => setIsDemoWalking(true)}
+      {isViewerOpen && (
+        <CampusViewer
+          initialPoint={viewerPoint}
+          returnScreen={viewerReturnScreen}
+          onClose={() => {
+            setIsViewerOpen(false)
+            setScreen(viewerReturnScreen)
+          }}
         />
       )}
+      {isIndoorOpen && <IndoorNavigator initialRoomId={indoorRoomId} initialPanoramaId={indoorPanoramaId} onClose={() => setIsIndoorOpen(false)} />}
     </main>
   )
 }
@@ -301,17 +281,11 @@ function nodeImagePercentCached(nodeId: string): Point2D {
   return percent
 }
 
-/** Renders the campus aerial photo with route polyline, destination pin, and live user dot. */
+/** Renders the campus aerial photo and optional place markers. */
 function CampusMapCanvas({
-  userPercent,
-  route,
-  destinationPercent,
   showPlaceMarkers = false,
   onPlaceMarker,
 }: {
-  userPercent: Point2D | null
-  route: CampusRoute | null
-  destinationPercent: Point2D | null
   showPlaceMarkers?: boolean
   onPlaceMarker?: (placeId: string) => void
 }) {
@@ -328,16 +302,12 @@ function CampusMapCanvas({
     return () => observer.disconnect()
   }, [])
 
-  // Include the photo's cropped edges so percent coordinates stay aligned to it.
+  // Match overlays to the full photo, including any empty space around it.
   const displayed = displayedImageRect(frame.width, frame.height, CAMPUS_IMAGE_ASPECT)
 
   return (
     <div ref={gridRef} className="map-grid" aria-label="Campus map">
-      <img className="aerial-image" src="/campus-aerial.jpg.png" alt="Upper view of the SEAIT campus" onError={(event) => { event.currentTarget.style.display = 'none' }} />
-      <svg className="campus-overlay-svg" viewBox={`0 0 ${frame.width || 100} ${frame.height || 100}`} preserveAspectRatio="none" aria-hidden="true">
-        {route && <polyline className="route-polyline-casing" points={route.linePercent.map((point) => `${displayed.left + (point.x / 100) * displayed.width},${displayed.top + (point.y / 100) * displayed.height}`).join(' ')} />}
-        {route && <polyline className="route-polyline" points={route.linePercent.map((point) => `${displayed.left + (point.x / 100) * displayed.width},${displayed.top + (point.y / 100) * displayed.height}`).join(' ')} />}
-      </svg>
+      <img className="aerial-image" src="/campus-aerial.jpg.png" alt="Upper view of the SEAIT campus" draggable={false} onDragStart={(event) => event.preventDefault()} onError={(event) => { event.currentTarget.style.display = 'none' }} />
       {showPlaceMarkers &&
         CAMPUS_PLACES.map((place) => {
           const position = nodeImagePercentCached(place.nodeId)
@@ -354,48 +324,39 @@ function CampusMapCanvas({
             </button>
           )
         })}
-      {destinationPercent && (
-        <div className="map-destination-pin" style={{ left: `${displayed.left + (destinationPercent.x / 100) * displayed.width}px`, top: `${displayed.top + (destinationPercent.y / 100) * displayed.height}px` }} aria-label="Destination"><span>★</span></div>
-      )}
-      {userPercent && (
-        <div className="navigation-user on-map" style={{ left: `${displayed.left + (userPercent.x / 100) * displayed.width}px`, top: `${displayed.top + (userPercent.y / 100) * displayed.height}px` }} aria-label="Your location"><span style={{ background: '#007aff', boxShadow: '0 0 12px #007aff' }} /></div>
-      )}
     </div>
   )
 }
 
-/** Displayed image rect, including the portions cropped by object-fit: cover. */
+/** Displayed image rect when the full image is contained within the map frame. */
 function displayedImageRect(width: number, height: number, aspect: number) {
   if (width <= 0 || height <= 0) return { left: 0, top: 0, width: 0, height: 0 }
   const containerAspect = width / height
   if (containerAspect > aspect) {
-    const imageHeight = width / aspect
-    return { left: 0, top: (height - imageHeight) / 2, width, height: imageHeight }
+    const imageWidth = height * aspect
+    return { left: (width - imageWidth) / 2, top: 0, width: imageWidth, height }
   }
-  const imageWidth = height * aspect
-  return { left: (width - imageWidth) / 2, top: 0, width: imageWidth, height }
+  const imageHeight = width / aspect
+  return { left: 0, top: (height - imageHeight) / 2, width, height: imageHeight }
 }
 
 function SearchScreen({
   onBack,
   onSelectPlace,
   onOpenIndoor,
+  query,
 }: {
   onBack: () => void
   onSelectPlace: (hit: SearchHit) => void
   onOpenIndoor: (roomId: string) => void
+  query: string
 }) {
-  const [query, setQuery] = useState('')
   const results = useMemo(() => searchCampus(query), [query])
   return (
     <section className="search-panel panel-enter">
       <button className="back-button" onClick={onBack}>← Back to map</button>
       <p className="eyebrow">CAMPUS SEARCH</p>
       <h2>Where are you going?</h2>
-      <div className="search-field">
-        <span>⌕</span>
-        <input aria-label="Search campus" placeholder="Search buildings, areas, or rooms" value={query} onChange={(event) => setQuery(event.target.value)} />
-      </div>
       <div className="result-list">
         {results.length === 0 && <div className="notice"><span>i</span><p>No campus places match “{query}”. Rooms will appear here once indoor map data is added.</p></div>}
         {results.map((hit) => {
@@ -422,12 +383,11 @@ function SearchScreen({
   )
 }
 
-function PlaceDetailCard({ hit, onNavigate, onOpenIndoor }: { hit: SearchHit; onNavigate: () => void; onOpenIndoor: () => void }) {
+function PlaceDetailCard({ hit, onDirections, onOpenIndoor }: { hit: SearchHit; onDirections: () => void; onOpenIndoor: () => void }) {
   const label = hitLabel(hit)
-  const isMstBuilding = hit.kind === 'place' && hit.place.id === 'mst-building'
   return (
     <article className="place-card">
-      <div className="place-thumb"><span>{hit.kind === 'place' ? (hit.place.id === 'mst-building' ? 'MST' : 'FIELD') : 'ROOM'}</span></div>
+      <div className="place-thumb"><span>{hit.kind === 'place' ? 'FIELD' : 'ROOM'}</span></div>
       <div className="place-info">
         <p className="category">{hit.kind === 'place' ? hit.place.category : `Room · Floor ${hit.room.floor}`}</p>
         <h3>{label}</h3>
@@ -435,195 +395,197 @@ function PlaceDetailCard({ hit, onNavigate, onOpenIndoor }: { hit: SearchHit; on
         {hit.kind === 'place' && hit.place.coordinates && <p className="coordinates">{hit.place.coordinates}</p>}
       </div>
       <div className="place-actions">
-        <button className="primary-button" onClick={onNavigate}>↗ Directions</button>
-        {isMstBuilding && <button className="secondary-button" onClick={onOpenIndoor}>🏢 Blueprint</button>}
+        <button className="primary-button" onClick={onDirections}>↗ Get direction</button>
+        {hit.kind === 'place' && hit.place.id === 'mst-building' && <button className="secondary-button" onClick={onOpenIndoor}>🏢 MST BUILDING BLUEPRINT</button>}
       </div>
     </article>
   )
 }
 
-function NavigateScreen({
-  hit,
-  liveGps,
-  onBack,
-  onStart,
+function DirectionScreen({
+  onOpenRoom,
+  onOpenCampusPoint,
 }: {
-  hit: SearchHit | null
-  liveGps: LatLng | null
-  onBack: () => void
-  onStart: (target: { label: string; nodeId: string }) => void
+  onOpenRoom: (roomId: string | null, panoramaId?: string | null) => void
+  onOpenCampusPoint?: (point: number | null, returnScreen?: 'map' | 'direction') => void
 }) {
-  const safeHit: SearchHit = hit ?? { kind: 'place', place: CAMPUS_PLACES[0] }
-  const target = targetForHit(safeHit)
-  const originNodeId = liveGps ? nearestNodeId(liveGps) : 'gate'
-  const route = useMemo(() => findRoute(originNodeId, target.nodeId), [originNodeId, target.nodeId])
-  const steps = route ? buildTurnSteps(route) : []
-  const insideCampus = liveGps ? isInsideCampus(liveGps) : true
-  return (
-    <section className="navigate-screen panel-enter">
-      <button className="back-button" onClick={onBack}>← Back to map</button>
-      <div className="route-hero">
-        <p className="eyebrow">CAMPUS WALKING ROUTE</p>
-        <h2>Directions to<br /><em>{target.label}</em></h2>
-        <div className="route-line"><span className="route-start" /><div><strong>{liveGps ? 'Start from your location' : 'Start from the main gate'}</strong><small>{liveGps ? 'Your live GPS position is used' : 'Open the app on campus to start from where you stand'}</small></div></div>
-        <div className="route-line"><span className="route-end" /><div><strong>{target.label}</strong><small>{route ? `${formatRouteDistance(route.totalDistance)} · ${Math.max(0, steps.length - 1)} steps` : 'Route pending'}</small></div></div>
-      </div>
-      {route && (
-        <ol className="turn-list preview">
-          {steps.map((step) => (
-            <li key={step.index} className={`turn-step ${step.action}`}>
-              <span className={`turn-icon ${step.action}`}>{turnGlyph(step.action)}</span>
-              <div><strong>{step.instruction}</strong><small>{step.distance > 0 ? formatRouteDistance(step.distance) : 'Destination'}</small></div>
-            </li>
-          ))}
-        </ol>
-      )}
-      <button className="primary-button full-width" onClick={() => onStart(target)}>Start walking route</button>
-      {!insideCampus && <div className="notice"><span>!</span><p>You appear to be outside the SEAIT campus. Please walk through the SEAIT location to see the dot of your location on the map.</p></div>}
-      <div className="notice"><span>i</span><p>Routes follow verified campus walkways only. No internet or external map service is used.</p></div>
-    </section>
-  )
-}
-
-function turnGlyph(action: string) {
-  if (action === 'left') return '↰'
-  if (action === 'right') return '↱'
-  if (action === 'arrive') return '◎'
-  return '↑'
-}
-
-function NavigationOverlay({
-  target,
-  location,
-  status,
-  onClose,
-  onDemo,
-}: {
-  target: { label: string; nodeId: string }
-  location: UserLocation | null
-  status: 'idle' | 'locating' | 'tracking' | 'error'
-  onClose: () => void
-  onDemo: () => void
-}) {
-  const gps: LatLng | null = location ? { latitude: location.latitude, longitude: location.longitude } : null
-  const originNodeId = gps ? nearestNodeId(gps) : 'gate'
-  const route = useMemo(
-    () => (gps ? routeFromLocation(gps, target.nodeId) : findRoute('gate', target.nodeId)),
-    [originNodeId, target.nodeId],
-  )
-  const progress = route && gps ? walkProgress(route, gps) : null
-  const remaining = progress?.remaining ?? route?.totalDistance ?? null
-  const offRoute = progress?.offRoute ?? 0
-  const arrived = remaining !== null && remaining <= ARRIVAL_RADIUS
-  const insideCampus = gps ? isInsideCampus(gps) : true
-  const userPercent = gps ? imagePercentFromGps(gps) : null
-  const destinationPercent = nodeImagePercentCached(target.nodeId)
-  const steps = route ? buildTurnSteps(route) : []
-  const nextStep = route && gps ? currentStep(route, gps) : steps[1] ?? steps[0] ?? null
-  const walkBearing = progress?.bearing ?? null
-  const arrowRotation = walkBearing != null ? (location?.heading != null ? walkBearing - location.heading : walkBearing) : 0
-  const etaMinutes = remaining !== null ? Math.max(1, Math.round(remaining / 72)) : null
+  const [floor, setFloor] = useState('')
+  const [roomId, setRoomId] = useState('')
+  const [shownRoomId, setShownRoomId] = useState<string | null>(null)
+  const [isEntrancePanoZoomed, setIsEntrancePanoZoomed] = useState(false)
+  const availableFloors = INDOOR_BUILDING.floors
+  const availableRooms = floor ? INDOOR_ROOMS.filter((room) => room.floor === Number(floor)) : []
+  const destinationRoom = INDOOR_ROOMS.find((room) => room.id === shownRoomId) ?? null
+  const nearestPanoramaId = destinationRoom ? nearestIndoorPanoramaId(destinationRoom.id) : null
+  const indoorRoute = destinationRoom ? findIndoorRoute(null, destinationRoom.id) : null
+  const clearDirections = () => setShownRoomId(null)
+  const hallwayWing = destinationRoom?.nodeId.includes('left-top')
+    ? 'upper left'
+    : destinationRoom?.nodeId.includes('left-bottom')
+      ? 'lower left'
+      : destinationRoom?.nodeId.includes('right-top')
+        ? 'upper right'
+        : destinationRoom?.nodeId.includes('right-bottom')
+          ? 'lower right'
+          : 'central'
+  const firstSegmentPoints = indoorRoute?.segments[0]?.points
+  const stairWing = firstSegmentPoints?.[firstSegmentPoints.length - 1]?.x
+  const stairSide = stairWing !== undefined && stairWing < 50 ? 'left' : 'right'
+  const gateSteps = [
+    'Start at the school Main Gate.',
+    'Follow the campus driveway and walkway toward the MST Building entrance. Continue at the driveway junction until you reach the entrance.',
+  ]
+  const campusSteps = destinationRoom?.floor === 1
+    ? ['Pass the MST Field and continue toward the MST Building.']
+    : [
+      'Pass the MST Field and continue toward the MST Building.',
+      'Enter the MST Building through the main entrance.',
+    ]
+  const buildingSteps = destinationRoom ? [
+    destinationRoom.floor === 1
+      ? 'Enter through the main entrance and continue into the Floor 1 hallway.'
+      : `From the main entrance, follow the hallway to the ${stairSide}-wing stairs and go up to Floor ${destinationRoom.floor}.`,
+    `On Floor ${destinationRoom.floor}, follow the ${hallwayWing} hallway toward ${destinationRoom.name}.`,
+    `Arrive at ${destinationRoom.name}.`,
+  ] : []
+  const directionSteps = [...gateSteps, ...campusSteps, ...buildingSteps]
 
   return (
-    <section className="navigation-overlay" aria-label="Campus walking navigation">
-      <header className="navigation-header">
-        <button className="navigation-close" onClick={onClose} aria-label="Stop navigation">×</button>
-        <div><p className="eyebrow">CAMPUS NAVIGATION</p><h2>{target.label}</h2></div>
-        <span className={`gps-status ${status}`} aria-label={status === 'tracking' ? 'Live location on' : status}>
-          {status === 'tracking' ? '●' : status === 'locating' ? '◌' : '○'}
-        </span>
+    <section className="direction-screen panel-enter" aria-label="Offline step-by-step campus directions">
+      <header className="direction-heading">
+        <p className="eyebrow">OFFLINE WALKING DIRECTIONS</p>
+        <h2>Find a room</h2>
+        <p>Choose a floor and room in the MST Building to get numbered directions from the school gate.</p>
       </header>
-
-      <div className="navigation-map-wrap">
-        <div className="navigation-map">
-          <CampusMapCanvas userPercent={userPercent} route={route} destinationPercent={destinationPercent} />
-          <div className="navigation-map-label">SEAIT CAMPUS · OFFLINE MAP</div>
-        </div>
+      <div className="direction-selectors">
+        <label>
+          Floor
+          <select
+            aria-label="Floor"
+            value={floor}
+            onChange={(event) => {
+              setFloor(event.target.value)
+              setRoomId('')
+              clearDirections()
+            }}
+          >
+            <option value="">Choose a floor</option>
+            {availableFloors.map((level) => <option key={level} value={level}>Floor {level}</option>)}
+          </select>
+        </label>
+        <label>
+          Room
+          <select
+            aria-label="Room"
+            value={roomId}
+            disabled={!floor}
+            onChange={(event) => {
+              setRoomId(event.target.value)
+              clearDirections()
+            }}
+          >
+            <option value="">Choose a room</option>
+            {availableRooms.map((room) => {
+              const hasDuplicateName = availableRooms.some((candidate) => candidate.id !== room.id && candidate.name === room.name)
+              const position = room.nodeId.includes('top') ? 'upper wing' : room.nodeId.includes('bottom') ? 'lower wing' : 'central wing'
+              return <option key={room.id} value={room.id}>{hasDuplicateName ? `${room.name} · ${position}` : room.name}</option>
+            })}
+          </select>
+        </label>
       </div>
-
-      <div className="navigation-sheet">
-        {arrived ? (
-          <div className="arrival-card">
-            <strong>🎉 You have arrived</strong>
-            <p>{target.label} — destination reached. You can now follow the indoor map instructions if you are inside the building.</p>
-            <button className="primary-button" onClick={onClose}>Done</button>
+      <button
+        className="primary-button direction-submit"
+        type="button"
+        disabled={!roomId}
+        onClick={() => setShownRoomId(roomId)}
+      >
+        Show Directions
+      </button>
+      {destinationRoom && indoorRoute ? (
+        <>
+          <div className="direction-route-summary" aria-live="polite">
+            <strong>{INDOOR_BUILDING.name}</strong>
+            <span className="direction-arrow">→</span>
+            <strong>Floor {destinationRoom.floor} · {destinationRoom.name}</strong>
           </div>
-        ) : (
-          <>
-            {!insideCampus && <div className="nav-banner outside">You are currently outside the SEAIT campus. Please walk toward the school grounds to see your position on the map.</div>}
-            {insideCampus && offRoute > OFF_ROUTE_LIMIT && <div className="nav-banner offroute">You are off the campus walkway. Head back toward the highlighted route.</div>}
-            {status === 'error' && <div className="nav-banner outside">Location is unavailable. Allow location access, or run the demo walk below.</div>}
-            <div className="navigation-next">
-              <span className="direction-arrow" style={{ transform: `rotate(${arrowRotation}deg)` }}>{turnGlyph(nextStep?.action ?? 'straight')}</span>
-              <div>
-                <p className="eyebrow">{nextStep?.action === 'arrive' ? 'DESTINATION' : 'NEXT DIRECTION'}</p>
-                <strong>{nextStep ? nextStep.instruction : 'Preparing route…'}</strong>
-                <small>
-                  {walkBearing != null ? `Walk ${Math.round((walkBearing + 360) % 360)}° · ` : ''}
-                  {status === 'tracking' ? 'Live location on' : status === 'locating' ? 'Finding your location…' : 'GPS off'}
-                </small>
+          <ol className="direction-step-list">
+            {directionSteps.map((step, index) => {
+              const isEntranceStep = /\bMST Building entrance\b/i.test(step)
+              return (
+                <li key={`${step}-${index}`}>
+                  {step}
+                  {isEntranceStep && (
+                    <button
+                      type="button"
+                      className="direction-pano-preview"
+                      onClick={() => setIsEntrancePanoZoomed(true)}
+                      aria-label="Open MST building entrance view"
+                      title="Open MST building entrance view"
+                    >
+                      <img
+                        src="/direction-entrance-final.png"
+                        alt="MST building entrance view"
+                        style={{ objectPosition: 'center center' }}
+                      />
+                      <span className="direction-pano-label">Entrance view</span>
+                    </button>
+                  )}
+                  {index === 0 && (
+                    <button
+                      className="secondary-button direction-indoor-button"
+                      type="button"
+                      onClick={() => onOpenCampusPoint?.(7, 'direction')}
+                    >
+                      <span className="direction-blue-dot" aria-hidden="true" />
+                      View nearest entrance location
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ol>
+          <p className="direction-hint">Building directions use the mapped stairs; an elevator is not listed in the offline data.</p>
+          <button
+            className="secondary-button direction-indoor-button"
+            type="button"
+            disabled={!nearestPanoramaId}
+            onClick={() => onOpenRoom(destinationRoom.id, nearestPanoramaId)}
+          >
+            <span className="direction-blue-dot" aria-hidden="true" />
+            {nearestPanoramaId ? 'View room hallway' : 'No nearby room hallway view available'}
+          </button>
+          {isEntrancePanoZoomed && (
+            <div className="direction-pano-modal-backdrop" onClick={() => setIsEntrancePanoZoomed(false)}>
+              <div
+                className="direction-pano-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="MST building entrance preview"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="direction-pano-modal-header">
+                  <div>
+                    <span className="direction-pano-kicker">Campus entrance</span>
+                    <h3>MST Building Entrance</h3>
+                  </div>
+                  <button type="button" className="direction-pano-close" aria-label="Close entrance preview" onClick={() => setIsEntrancePanoZoomed(false)}>
+                    Close
+                  </button>
+                </div>
+                <div className="direction-pano-modal-body">
+                  <img src="/direction-entrance-final.png" alt="MST building entrance view" />
+                </div>
               </div>
             </div>
-            <div className="navigation-stats">
-              <div><span>Distance left</span><strong>{remaining === null ? '--' : formatDistance(remaining)}</strong></div>
-              <div><span>Time on foot</span><strong>{etaMinutes === null ? '--' : `~${etaMinutes} min`}</strong></div>
-              <div><span>Accuracy</span><strong>{location ? `±${Math.round(location.accuracy)} m` : '--'}</strong></div>
-              <div><span>Steps left</span><strong>{steps.length > 1 ? steps.length - 1 : '--'}</strong></div>
-            </div>
-            {status !== 'tracking' && <button className="demo-button" onClick={onDemo}>▶ Run demo walk (no GPS needed)</button>}
-            <button className="navigation-stop" onClick={onClose}>Stop navigation</button>
-          </>
-        )}
-      </div>
+          )}
+        </>
+      ) : shownRoomId ? (
+        <p className="direction-error" role="alert">An indoor route for that room is not available in the offline map data.</p>
+      ) : (
+        <div className="direction-prompt">Select a floor and room, then choose “Show Directions.”</div>
+      )}
     </section>
   )
-}
-
-/** Steps through waypoint positions so the app can be demoed without physically moving. */
-function useSimulatedWalk(active: boolean, waypoints: LatLng[]) {
-  const [location, setLocation] = useState<UserLocation | null>(null)
-  useEffect(() => {
-    if (!active || waypoints.length < 2) {
-      setLocation(null)
-      return
-    }
-    const subSteps = 6
-    let segment = 0
-    let sub = 0
-    let timer = 0
-    const settle = () => {
-      const last = waypoints[waypoints.length - 1]
-      setLocation({ latitude: last.latitude, longitude: last.longitude, accuracy: 4, heading: null })
-    }
-    const tick = () => {
-      if (segment >= waypoints.length - 1) {
-        settle()
-        return
-      }
-      sub += 1
-      if (sub > subSteps) {
-        sub = 1
-        segment += 1
-        if (segment >= waypoints.length - 1) {
-          settle()
-          return
-        }
-      }
-      const from = waypoints[segment]
-      const to = waypoints[segment + 1]
-      const t = sub / subSteps
-      setLocation({
-        latitude: from.latitude + (to.latitude - from.latitude) * t,
-        longitude: from.longitude + (to.longitude - from.longitude) * t,
-        accuracy: 4,
-        heading: null,
-      })
-      timer = window.setTimeout(tick, 450)
-    }
-    tick()
-    return () => window.clearTimeout(timer)
-  }, [active, waypoints])
-  return location
 }
 
 function LoadingScreen({ progress }: { progress: number }) {
@@ -668,16 +630,61 @@ function LoadingScreen({ progress }: { progress: number }) {
   )
 }
 
-function CampusViewer({ onClose, initialPoint = null }: { onClose: () => void; initialPoint?: number | null }) {
+function nearestCampusPanoramaPoint(sourcePoint: number, excludedPoints: number[] = []): number | null {
+  const source = STREET_VIEW_POINTS.find((entry) => entry.point === sourcePoint)
+  if (!source) return null
+
+  const blocked = new Set(excludedPoints)
+  blocked.add(sourcePoint)
+
+  let nearestPoint: number | null = null
+  let nearestDistance = Infinity
+  let nearbyPoint: number | null = null
+  let nearbyDistance = Infinity
+  const localWalkThreshold = 18
+
+  for (const entry of STREET_VIEW_POINTS) {
+    if (blocked.has(entry.point)) continue
+
+    const distance = Math.hypot(entry.image.x - source.image.x, entry.image.y - source.image.y)
+    if (distance < nearestDistance) {
+      nearestPoint = entry.point
+      nearestDistance = distance
+    }
+    if (distance <= localWalkThreshold && distance < nearbyDistance) {
+      nearbyPoint = entry.point
+      nearbyDistance = distance
+    }
+  }
+
+  return nearbyPoint ?? nearestPoint
+}
+
+function CampusViewer({
+  onClose,
+  initialPoint = null,
+  returnScreen = 'map',
+}: {
+  onClose: () => void
+  initialPoint?: number | null
+  returnScreen?: 'map' | 'direction'
+}) {
   const sphereRef = useRef<HTMLDivElement>(null)
   const [mapZoom, setMapZoom] = useState(1)
   const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 })
   const [selectedPoint, setSelectedPoint] = useState<number | null>(initialPoint)
   const [viewerMode, setViewerMode] = useState<'map' | 'walking'>(initialPoint ? 'walking' : 'map')
   const [failedPanorama, setFailedPanorama] = useState(false)
+  const [visitedPanoramas, setVisitedPanoramas] = useState<number[]>([])
   const mapDragRef = useRef({ active: false, startX: 0, startY: 0, startOffset: { x: 0, y: 0 } })
 
   const activePanorama = STREET_VIEW_POINTS.find((entry) => entry.point === selectedPoint)?.panorama ?? null
+  const nearestPanoramaPoint = selectedPoint ? nearestCampusPanoramaPoint(selectedPoint, visitedPanoramas) : null
+
+  useEffect(() => {
+    if (selectedPoint === null) return
+    setVisitedPanoramas((current) => (current.includes(selectedPoint) ? current : [...current, selectedPoint]))
+  }, [selectedPoint])
 
   useEffect(() => {
     if (viewerMode !== 'walking' || !sphereRef.current) return
@@ -716,6 +723,8 @@ function CampusViewer({ onClose, initialPoint = null }: { onClose: () => void; i
     controls.enablePan = false
     controls.enableDamping = true
     controls.rotateSpeed = -0.25
+    controls.autoRotate = true
+    controls.autoRotateSpeed = 0.5
     controls.minPolarAngle = 0.08
     controls.maxPolarAngle = Math.PI - 0.08
 
@@ -794,14 +803,33 @@ function CampusViewer({ onClose, initialPoint = null }: { onClose: () => void; i
     <section className="viewer-overlay" aria-label="SEAIT 360 campus view">
       <div className="viewer-topbar">
         <div><p className="eyebrow">INTERACTIVE CAMPUS VIEW</p><h2>{viewerMode === 'map' ? 'MST FIELD' : selectedPoint ? 'STREET VIEW' : 'Walking area'}</h2></div>
-        <button
-          className="viewer-close"
-          onClick={() => (viewerMode === 'walking' ? setViewerMode('map') : onClose())}
-          aria-label={viewerMode === 'walking' ? 'Back to SEAIT map' : 'Close campus view'}
-          title={viewerMode === 'walking' ? 'Back to SEAIT map' : 'Close campus view'}
-        >
-          {viewerMode === 'walking' ? '←' : '×'}
-        </button>
+        <div className="viewer-actions">
+          {returnScreen === 'direction' && viewerMode === 'walking' && (
+            <button
+              type="button"
+              className="viewer-back"
+              onClick={() => onClose()}
+              aria-label="Back to directions"
+              title="Back to directions"
+            >
+              ← Directions
+            </button>
+          )}
+          <button
+            className="viewer-close"
+            onClick={() => {
+              if (viewerMode === 'walking' && returnScreen !== 'direction') {
+                setViewerMode('map')
+                return
+              }
+              onClose()
+            }}
+            aria-label={viewerMode === 'walking' && returnScreen !== 'direction' ? 'Back to map' : 'Close campus view'}
+            title={viewerMode === 'walking' && returnScreen !== 'direction' ? 'Back to map' : 'Close campus view'}
+          >
+            {viewerMode === 'walking' && returnScreen !== 'direction' ? '←' : '×'}
+          </button>
+        </div>
       </div>
       <div className={viewerMode === 'map' ? 'panorama map-panorama' : 'panorama'} onPointerDown={startMapPan} onPointerMove={moveMapPan} onPointerUp={stopMapPan} onPointerCancel={stopMapPan}>
         {viewerMode === 'map' ? (
@@ -830,7 +858,22 @@ function CampusViewer({ onClose, initialPoint = null }: { onClose: () => void; i
             </div>
           </div>
         ) : (
-          <div ref={sphereRef} className="sphere-panorama" aria-label="360 walking area panorama" />
+          <div className="sphere-wrapper">
+            <div ref={sphereRef} className="sphere-panorama" aria-label="360 walking area panorama" />
+            {nearestPanoramaPoint !== null && (
+              <button
+                type="button"
+                className="campus-next-panorama"
+                onClick={() => {
+                  setSelectedPoint(nearestPanoramaPoint)
+                  setViewerMode('walking')
+                }}
+                aria-label={`Go to the nearest nearby panorama: point ${nearestPanoramaPoint}`}
+              >
+                Go to nearest walkway
+              </button>
+            )}
+          </div>
         )}
         {viewerMode === 'map' && (
           <div className="map-zoom-controls" aria-label="Map zoom controls" onPointerDown={(event) => event.stopPropagation()}>
@@ -838,16 +881,19 @@ function CampusViewer({ onClose, initialPoint = null }: { onClose: () => void; i
             <button type="button" onClick={() => changeMapZoom(-0.25)} aria-label="Zoom out">−</button>
           </div>
         )}
-        <div className="viewer-hint">
-          {viewerMode === 'walking'
-            ? failedPanorama
+        {viewerMode === 'walking' && (
+          <div className="viewer-hint">
+            {failedPanorama
               ? '360 image missing for this point — add it to /public and register it in src/campus/model.ts'
-              : 'Drag to look around — use this to verify if you are standing in the correct spot shown on the map'
-            : selectedPoint && !STREET_VIEW_POINTS.some((entry) => entry.point === selectedPoint)
-              ? `Point ${selectedPoint} selected — 360 image pending`
-              : 'Blue points open 360 street views · Use them to verify your location visually'}
-        </div>
+              : 'Drag to look around — use this to verify if you are standing in the correct spot shown on the map'}
+          </div>
+        )}
       </div>
+      {viewerMode === 'map' && (
+        <div className="viewer-footer campus-view-legend">
+          <span><i className="campus-view-legend-dot" aria-hidden="true" />View 360 image</span>
+        </div>
+      )}
     </section>
   )
 }

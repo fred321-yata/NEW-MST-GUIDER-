@@ -1,10 +1,12 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { CAMPUS_IMAGE_ASPECT } from './campus/geo'
 import {
   INDOOR_BUILDING,
   INDOOR_MARKERS,
   INDOOR_ROOMS,
+  MARKER_COLORS,
   findIndoorRoute,
   roomsOnFloor,
 } from './campus/indoor'
@@ -21,6 +23,7 @@ const ROOM_COLORS: Record<RoomKind, string> = {
 
 type Props = {
   initialRoomId?: string | null
+  initialPanoramaId?: string | null
   onClose: () => void
 }
 
@@ -60,18 +63,26 @@ for (const floor of [2, 3, 4]) {
 
 const panoramaFilename = (pointId: string) => PANORAMA_FILES[pointId] ?? `${pointId}.jpg`
 
+function clampBlueprintOffset(
+  offset: { x: number; y: number },
+  zoom: number,
+  width: number,
+  height: number,
+) {
+  const maxX = (width * (zoom - 1)) / 2
+  const maxY = (height * (zoom - 1)) / 2
+  return {
+    x: Math.min(maxX, Math.max(-maxX, offset.x)),
+    y: Math.min(maxY, Math.max(-maxY, offset.y)),
+  }
+}
+
 const PANORAMA_FILES: Record<string, string | undefined> = {
-  'capture-01': undefined,
-  'capture-02': undefined,
-  'capture-03': undefined,
-  'capture-04': 'indoor-panoscapture-04.jpg.jpg',
   'capture-05': 'indoor-panoscapture-05.pg.jpg',
   'capture-06': 'indoor-panoscapture-06.jpg.jpg',
-  'capture-07': undefined,
   'capture-08': 'indoor-panoscapture-08.jpg.jpg',
   'capture-09': 'indoor-panoscapture-09.jpg.jpg',
   'capture-10': 'indoor-panoscapture-10.jpg.jpg',
-  'capture-11': undefined,
   'capture-12': 'indoor-panoscapture-12.jpg.jpg',
   'capture-13': 'indoor-panoscapture-13.jpg.jpg',
   'capture-14': 'indoor-panoscapture-14.jpg.jpg',
@@ -81,18 +92,14 @@ const PANORAMA_FILES: Record<string, string | undefined> = {
   'capture-18': 'indoor-panoscapture-18.jpg.jpg',
 }
 
-for (const floor of [2, 3, 4]) {
-  for (let index = 1; index <= 18; index += 1) {
+for (const [floor, totalPoints] of [[2, 18], [3, 16], [4, 15]] as const) {
+  for (let index = 1; index <= totalPoints; index += 1) {
     const pointId = `floor-${floor}-capture-${String(index).padStart(2, '0')}`
-    PANORAMA_FILES[pointId] = floor === 2
-      ? `floor-2-capture-${String(index).padStart(2, '0')}.jpg.jpg`
-      : floor === 3 && index <= 16
-        ? `floor-3-capture-${String(index).padStart(2, '0')}.jpg.jpg`
-      : floor === 4 && index <= 15
-        ? `floor-4-capture-${String(index).padStart(2, '0')}.jpg.jpg.jpg`
-      : undefined
+    const suffix = floor === 4 ? '.jpg.jpg.jpg' : '.jpg.jpg'
+    PANORAMA_FILES[pointId] = `floor-${floor}-capture-${String(index).padStart(2, '0')}${suffix}`
   }
 }
+
 
 const FINAL_PANORAMA_POSITIONS: Record<string, { x: number; y: number }> = Object.fromEntries(
   [
@@ -108,13 +115,65 @@ const FINAL_PANORAMA_POSITIONS: Record<string, { x: number; y: number }> = Objec
   ),
 )
 
-const HIDDEN_PANORAMA_IDS = new Set([
-  'capture-01', 'capture-02', 'capture-03', 'capture-07', 'capture-11',
-  'floor-3-capture-17', 'floor-3-capture-18',
-  'floor-4-capture-16', 'floor-4-capture-17', 'floor-4-capture-18',
-])
+const HIDDEN_PANORAMA_IDS = new Set<string>()
 
-export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
+export function nearestIndoorPanoramaId(roomId: string): string | null {
+  const room = INDOOR_ROOMS.find((candidate) => candidate.id === roomId)
+  if (!room) return null
+  const centerX = room.rect.x + room.rect.w / 2
+  const centerY = room.rect.y + room.rect.h / 2
+  let nearestId: string | null = null
+  let nearestDistance = Infinity
+
+  for (const point of DEFAULT_PANORAMA_POINTS) {
+    const position = FINAL_PANORAMA_POSITIONS[point.id]
+    if (point.floor !== room.floor || HIDDEN_PANORAMA_IDS.has(point.id) || !PANORAMA_FILES[point.id] || !position) continue
+    const distance = Math.hypot((position.x - centerX) * CAMPUS_IMAGE_ASPECT, position.y - centerY)
+    if (distance < nearestDistance) {
+      nearestId = point.id
+      nearestDistance = distance
+    }
+  }
+
+  return nearestId
+}
+
+export function nearestConnectedPanoramaId(sourceId: string, excludedIds: string[] = []): string | null {
+  const sourcePoint = FINAL_PANORAMA_POSITIONS[sourceId]
+  const sourceFloor = DEFAULT_PANORAMA_POINTS.find((point) => point.id === sourceId)?.floor ?? null
+
+  if (!sourcePoint || sourceFloor === null) return null
+
+  const blocked = new Set(excludedIds)
+  blocked.add(sourceId)
+
+  let nearestId: string | null = null
+  let nearestDistance = Infinity
+  let nearbyId: string | null = null
+  let nearbyDistance = Infinity
+  const localWalkThreshold = 18
+
+  for (const point of DEFAULT_PANORAMA_POINTS) {
+    if (blocked.has(point.id) || point.floor !== sourceFloor || !PANORAMA_FILES[point.id]) continue
+
+    const position = FINAL_PANORAMA_POSITIONS[point.id]
+    if (!position) continue
+
+    const distance = Math.hypot((position.x - sourcePoint.x) * CAMPUS_IMAGE_ASPECT, position.y - sourcePoint.y)
+    if (distance < nearestDistance) {
+      nearestId = point.id
+      nearestDistance = distance
+    }
+    if (distance <= localWalkThreshold && distance < nearbyDistance) {
+      nearbyId = point.id
+      nearbyDistance = distance
+    }
+  }
+
+  return nearbyId ?? nearestId
+}
+
+export function IndoorNavigator({ initialRoomId = null, initialPanoramaId = null, onClose }: Props) {
   const [floor, setFloor] = useState(initialRoomId ? INDOOR_ROOMS.find((room) => room.id === initialRoomId)?.floor ?? 1 : 1)
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(initialRoomId)
   const [destinationId, setDestinationId] = useState<string | null>(null)
@@ -122,9 +181,18 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
   const [blueprintZoom, setBlueprintZoom] = useState(1)
   const [blueprintOffset, setBlueprintOffset] = useState({ x: 0, y: 0 })
   const blueprintDragRef = useRef({ active: false, startX: 0, startY: 0, startOffsetX: 0, startOffsetY: 0 })
+  const blueprintPointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const blueprintPinchRef = useRef<{
+    distance: number
+    zoom: number
+    offset: { x: number; y: number }
+    anchor: { x: number; y: number }
+    bounds: DOMRect
+  } | null>(null)
+  const [isBlueprintGesturing, setIsBlueprintGesturing] = useState(false)
   const panoramaPoints = DEFAULT_PANORAMA_POINTS
     .map((point) => ({ ...point, ...FINAL_PANORAMA_POSITIONS[point.id] }))
-    .filter((point) => !HIDDEN_PANORAMA_IDS.has(point.id))
+    .filter((point) => PANORAMA_FILES[point.id])
 
   const selectedRoom = selectedRoomId ? INDOOR_ROOMS.find((room) => room.id === selectedRoomId) ?? null : null
   const destinationRoom = destinationId ? INDOOR_ROOMS.find((room) => room.id === destinationId) ?? null : null
@@ -139,37 +207,109 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
   }
 
   const changeBlueprintZoom = (amount: number) => {
-    setBlueprintZoom((current) => {
-      const next = Math.min(3, Math.max(1, current + amount))
-      if (next === 1) setBlueprintOffset({ x: 0, y: 0 })
-      return next
-    })
+    const next = Math.min(3, Math.max(1, blueprintZoom + amount))
+    const bounds = blueprintRef.current?.getBoundingClientRect()
+    setBlueprintZoom(next)
+    setBlueprintOffset((current) =>
+      bounds ? clampBlueprintOffset(current, next, bounds.width, bounds.height) : { x: 0, y: 0 },
+    )
   }
 
   const startBlueprintDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (blueprintZoom === 1 || (event.target as HTMLElement).closest('button')) return
-    const offset = blueprintOffset
+    if ((event.target as HTMLElement).closest('button')) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    blueprintPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+    if (blueprintPointersRef.current.size === 2) {
+      const [first, second] = Array.from(blueprintPointersRef.current.values())
+      const bounds = blueprintRef.current?.getBoundingClientRect()
+      if (!bounds) return
+      const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+      blueprintPinchRef.current = {
+        distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+        zoom: blueprintZoom,
+        offset: blueprintOffset,
+        anchor: {
+          x: center.x - bounds.left - bounds.width / 2 - blueprintOffset.x,
+          y: center.y - bounds.top - bounds.height / 2 - blueprintOffset.y,
+        },
+        bounds,
+      }
+      blueprintDragRef.current.active = false
+      setIsBlueprintGesturing(true)
+      return
+    }
+
+    if (blueprintZoom === 1) return
     blueprintDragRef.current = {
       active: true,
       startX: event.clientX,
       startY: event.clientY,
-      startOffsetX: offset.x,
-      startOffsetY: offset.y,
+      startOffsetX: blueprintOffset.x,
+      startOffsetY: blueprintOffset.y,
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const moveBlueprintDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (blueprintPointersRef.current.has(event.pointerId)) {
+      blueprintPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    }
+    const pinch = blueprintPinchRef.current
+    if (pinch && blueprintPointersRef.current.size >= 2) {
+      const [first, second] = Array.from(blueprintPointersRef.current.values())
+      const centerX = (first.x + second.x) / 2 - pinch.bounds.left - pinch.bounds.width / 2
+      const centerY = (first.y + second.y) / 2 - pinch.bounds.top - pinch.bounds.height / 2
+      const distance = Math.hypot(second.x - first.x, second.y - first.y)
+      const nextZoom = Math.min(3, Math.max(1, pinch.zoom * distance / pinch.distance))
+      const nextOffset = clampBlueprintOffset(
+        {
+          x: centerX - pinch.anchor.x * (nextZoom / pinch.zoom),
+          y: centerY - pinch.anchor.y * (nextZoom / pinch.zoom),
+        },
+        nextZoom,
+        pinch.bounds.width,
+        pinch.bounds.height,
+      )
+      setBlueprintZoom(nextZoom)
+      setBlueprintOffset(nextOffset)
+      return
+    }
     if (!blueprintDragRef.current.active) return
     const { startX, startY, startOffsetX, startOffsetY } = blueprintDragRef.current
-    setBlueprintOffset({
-      x: startOffsetX + event.clientX - startX,
-      y: startOffsetY + event.clientY - startY,
-    })
+    const bounds = blueprintRef.current?.getBoundingClientRect()
+    if (!bounds) return
+    setBlueprintOffset(
+      clampBlueprintOffset(
+        {
+          x: startOffsetX + event.clientX - startX,
+          y: startOffsetY + event.clientY - startY,
+        },
+        blueprintZoom,
+        bounds.width,
+        bounds.height,
+      ),
+    )
   }
 
-  const stopBlueprintDrag = () => {
+  const stopBlueprintDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    blueprintPointersRef.current.delete(event.pointerId)
+    if (blueprintPinchRef.current) {
+      blueprintPinchRef.current = null
+      setIsBlueprintGesturing(false)
+    }
     blueprintDragRef.current.active = false
+    const remainingPointer = blueprintPointersRef.current.entries().next().value
+    if (remainingPointer && blueprintZoom > 1) {
+      const [pointerId, position] = remainingPointer
+      blueprintDragRef.current = {
+        active: true,
+        startX: position.x,
+        startY: position.y,
+        startOffsetX: blueprintOffset.x,
+        startOffsetY: blueprintOffset.y,
+      }
+      blueprintRef.current?.setPointerCapture(pointerId)
+    }
   }
 
   const routeFloorPoints = (targetFloor: number) =>
@@ -178,11 +318,18 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
   const percent = (value: number) => `${value}%`
 
   // Indoor panorama viewer state
-  const [openPanorama, setOpenPanorama] = useState<string | null>(null)
+  const [openPanorama, setOpenPanorama] = useState<string | null>(initialPanoramaId)
   const [pendingPanorama, setPendingPanorama] = useState<string | null>(null)
   const [failedPanorama, setFailedPanorama] = useState(false)
   const sphereRef = useRef<HTMLDivElement | null>(null)
   const [lastClickedPanorama, setLastClickedPanorama] = useState<PanoramaPoint | null>(null)
+  const [visitedPanoramas, setVisitedPanoramas] = useState<string[]>([])
+  const nearestPanoramaId = openPanorama ? nearestConnectedPanoramaId(openPanorama, visitedPanoramas) : null
+
+  useEffect(() => {
+    if (!openPanorama) return
+    setVisitedPanoramas((current) => (current.includes(openPanorama) ? current : [...current, openPanorama]))
+  }, [openPanorama])
 
   const closePanorama = () => {
     if (openPanorama) {
@@ -192,6 +339,8 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
     setOpenPanorama(null)
     setPendingPanorama(null)
     setFailedPanorama(false)
+    setBlueprintZoom(1)
+    setBlueprintOffset({ x: 0, y: 0 })
   }
 
   useEffect(() => {
@@ -238,6 +387,8 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
     controls.enablePan = false
     controls.enableDamping = true
     controls.rotateSpeed = -0.25
+    controls.autoRotate = true
+    controls.autoRotateSpeed = 0.5
     controls.minPolarAngle = 0.08
     controls.maxPolarAngle = Math.PI - 0.08
 
@@ -296,13 +447,13 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
         <div className="indoor-map-pane">
           <div
             ref={blueprintRef}
-            className="indoor-blueprint"
+            className={`indoor-blueprint${isBlueprintGesturing ? ' is-gesturing' : ''}`}
             style={{ aspectRatio: `${INDOOR_BUILDING.blueprintAspect}` }}
             onPointerDown={startBlueprintDrag}
             onPointerMove={moveBlueprintDrag}
             onPointerUp={stopBlueprintDrag}
             onPointerCancel={stopBlueprintDrag}
-            onPointerLeave={stopBlueprintDrag}>
+            >
 
             <div
               className="indoor-blueprint-content"
@@ -389,7 +540,13 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
                 style={{ left: percent(marker.image.x), top: percent(marker.image.y), background: marker.color }}
                 title={marker.label}
                 aria-label={marker.label}
-              />
+              >
+                {(marker.kind === 'entrance' || marker.kind === 'exit') && (
+                  <svg className="indoor-marker-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 20h5v-5h5v-5h5V5h3" />
+                  </svg>
+                )}
+              </span>
             ))}
 
             {/* Return target indicator placed where user clicked before opening panorama */}
@@ -407,7 +564,25 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
             {(openPanorama || pendingPanorama) && (
               <div className="indoor-pano-modal" role="dialog" aria-label="Indoor 360 viewer">
                 <div className="indoor-pano-topbar">
-                  <strong>{openPanorama ?? pendingPanorama}</strong>
+                  {openPanorama && (
+                    <div className="indoor-pano-title">
+                      <span><i />Auto-rotating 360°</span>
+                      {nearestPanoramaId && (
+                        <button
+                          type="button"
+                          className="indoor-pano-next"
+                          onClick={() => {
+                            if (!nearestPanoramaId) return
+                            setOpenPanorama(nearestPanoramaId)
+                            setPendingPanorama(null)
+                          }}
+                          aria-label={`Go to the nearest connected 360 image: ${nearestPanoramaId}`}
+                        >
+                          Go to nearest walkway
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <button onClick={closePanorama} className="indoor-pano-back">← Back to blueprint</button>
                   </div>
@@ -433,20 +608,27 @@ export function IndoorNavigator({ initialRoomId = null, onClose }: Props) {
             <button type="button" onClick={() => changeBlueprintZoom(-0.25)} aria-label="Zoom out">−</button>
           </div>
           <div className="indoor-legend">
-            <span><i style={{ background: MARKER_LEGEND.entrance }} /> Entrance</span>
-            <span><i style={{ background: MARKER_LEGEND.exit }} /> Exit</span>
-            <span><i style={{ background: MARKER_LEGEND.hallway }} /> Hallway</span>
+            <span>
+              <i className="indoor-legend-indicator marker-entrance" style={{ background: MARKER_COLORS.entrance }}>
+                <svg className="indoor-marker-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 20h5v-5h5v-5h5V5h3" />
+                </svg>
+              </i>
+              Entrance
+            </span>
+            <span>
+              <i className="indoor-legend-indicator marker-exit" style={{ background: MARKER_COLORS.exit }}>
+                <svg className="indoor-marker-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 20h5v-5h5v-5h5V5h3" />
+                </svg>
+              </i>
+              Exit
+            </span>
+            <span><i className="indoor-legend-indicator marker-hallway" /> View 360 image</span>
           </div>
         </div>
 
       </div>
     </section>
   )
-}
-
-const MARKER_LEGEND = {
-  entrance: '#2b6ce6',
-  exit: '#e02b2b',
-  hallway: '#1f9d3a',
-  stairs: '#7a5df0',
 }
